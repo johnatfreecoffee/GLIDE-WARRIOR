@@ -22,5 +22,5 @@ window.function = function (playerName, characterType, difficulty, startLevel, l
   }
   
   // Return direct URL to game.html on GitHub Pages
-  return `https://yourusername.github.io/your-repo-name/game.html?${params.toString()}`;
+  return `https://johnatfreecoffee.github.io/GLIDE-WARRIOR/game.html?${params.toString()}`;
 }
