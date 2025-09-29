@@ -251,4 +251,479 @@ window.function = function (playerName, difficulty, startLevel) {
             
             // Update particles
             for (let i = particles.length - 1; i >= 0; i--) {
-                particle
+                particles[i].update();
+                particles[i].show();
+                if (particles[i].isDead()) {
+                    particles.splice(i, 1);
+                }
+            }
+            
+            pop();
+            
+            // Check win condition
+            if (player.x > levelWidth - 100) {
+                if (currentLevel < 3) {
+                    gameState = 'levelComplete';
+                } else {
+                    gameState = 'victory';
+                }
+            }
+            
+            // Check lose condition
+            if (lives <= 0) {
+                gameState = 'gameover';
+            }
+        }
+        
+        function drawBackground() {
+            // Parallax background
+            fill(30, 30, 60);
+            noStroke();
+            for (let i = 0; i < 5; i++) {
+                let x = (cameraX * 0.3 + i * 400) % 800;
+                rect(x - 400, 0, 400, height);
+            }
+            
+            // Stars
+            fill(255, 255, 100);
+            for (let i = 0; i < 50; i++) {
+                let x = (i * 173 + cameraX * 0.5) % levelWidth;
+                let y = (i * 197) % (height - 100);
+                circle(x, y, 2);
+            }
+        }
+        
+        function drawHUD() {
+            fill(0, 200);
+            noStroke();
+            rect(0, 0, width, 40);
+            
+            fill(255);
+            textSize(16);
+            textAlign(LEFT);
+            text(\`PLAYER: \${PLAYER_NAME}\`, 10, 25);
+            text(\`SCORE: \${score}\`, 200, 25);
+            text(\`LIVES: \${lives}\`, 400, 25);
+            text(\`LEVEL: \${currentLevel}\`, 550, 25);
+            text(\`DIFFICULTY: \${DIFFICULTY.toUpperCase()}\`, 650, 25);
+        }
+        
+        function showGameOver() {
+            background(0);
+            fill(255, 0, 0);
+            textSize(64);
+            textAlign(CENTER, CENTER);
+            text('GAME OVER', width/2, height/2 - 50);
+            
+            fill(255);
+            textSize(24);
+            text(\`Final Score: \${score}\`, width/2, height/2 + 20);
+            text('Press SPACE to restart', width/2, height/2 + 60);
+        }
+        
+        function showVictory() {
+            background(0, 100, 0);
+            fill(255, 255, 0);
+            textSize(64);
+            textAlign(CENTER, CENTER);
+            text('VICTORY!', width/2, height/2 - 50);
+            
+            fill(255);
+            textSize(24);
+            text(\`Final Score: \${score}\`, width/2, height/2 + 20);
+            text(\`\${PLAYER_NAME} saved the day!\`, width/2, height/2 + 60);
+            text('Press SPACE to restart', width/2, height/2 + 100);
+        }
+        
+        function showLevelComplete() {
+            background(0, 50, 100);
+            fill(100, 255, 100);
+            textSize(48);
+            textAlign(CENTER, CENTER);
+            text(\`LEVEL \${currentLevel} COMPLETE!\`, width/2, height/2 - 50);
+            
+            fill(255);
+            textSize(24);
+            text(\`Score: \${score}\`, width/2, height/2 + 20);
+            text('Press SPACE for next level', width/2, height/2 + 60);
+        }
+        
+        function keyPressed() {
+            if (key === ' ') {
+                if (gameState === 'gameover') {
+                    // Restart
+                    score = 0;
+                    lives = settings.playerLives;
+                    currentLevel = START_LEVEL;
+                    gameState = 'playing';
+                    initLevel(currentLevel);
+                } else if (gameState === 'levelComplete') {
+                    currentLevel++;
+                    gameState = 'playing';
+                    initLevel(currentLevel);
+                } else if (gameState === 'victory') {
+                    score = 0;
+                    lives = settings.playerLives;
+                    currentLevel = START_LEVEL;
+                    gameState = 'playing';
+                    initLevel(currentLevel);
+                } else if (gameState === 'playing') {
+                    player.jump();
+                }
+            }
+            
+            if (key === 'x' || key === 'X') {
+                player.shoot();
+            }
+        }
+        
+        function createExplosion(x, y) {
+            for (let i = 0; i < 20; i++) {
+                particles.push(new Particle(x, y, color(255, 100, 0)));
+            }
+        }
+        
+        function createHitEffect(x, y) {
+            for (let i = 0; i < 5; i++) {
+                particles.push(new Particle(x, y, color(255, 255, 0)));
+            }
+        }
+        
+        class Player {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.w = 30;
+                this.h = 40;
+                this.vx = 0;
+                this.vy = 0;
+                this.speed = 4;
+                this.jumpPower = -12;
+                this.gravity = 0.6;
+                this.onGround = false;
+                this.shootCooldown = 0;
+                this.invincible = 0;
+            }
+            
+            update() {
+                // Movement
+                if (keyIsDown(LEFT_ARROW) || keyIsDown(65)) {
+                    this.vx = -this.speed;
+                } else if (keyIsDown(RIGHT_ARROW) || keyIsDown(68)) {
+                    this.vx = this.speed;
+                } else {
+                    this.vx = 0;
+                }
+                
+                // Shooting
+                if (keyIsDown(88)) { // X key
+                    this.shoot();
+                }
+                
+                this.x += this.vx;
+                this.vy += this.gravity;
+                this.y += this.vy;
+                
+                this.onGround = false;
+                
+                // Platform collision
+                for (let platform of platforms) {
+                    if (this.intersects(platform)) {
+                        if (this.vy > 0) {
+                            this.y = platform.y - this.h;
+                            this.vy = 0;
+                            this.onGround = true;
+                        }
+                    }
+                }
+                
+                // Keep in bounds
+                this.x = constrain(this.x, 0, levelWidth - this.w);
+                
+                // Enemy collision
+                if (this.invincible === 0) {
+                    for (let enemy of enemies) {
+                        if (this.hits(enemy)) {
+                            lives--;
+                            this.invincible = 120;
+                            createExplosion(this.x, this.y);
+                        }
+                    }
+                    
+                    if (boss && this.hits(boss)) {
+                        lives--;
+                        this.invincible = 120;
+                        createExplosion(this.x, this.y);
+                    }
+                }
+                
+                if (this.invincible > 0) {
+                    this.invincible--;
+                }
+                
+                if (this.shootCooldown > 0) {
+                    this.shootCooldown--;
+                }
+            }
+            
+            jump() {
+                if (this.onGround) {
+                    this.vy = this.jumpPower;
+                }
+            }
+            
+            shoot() {
+                if (this.shootCooldown === 0) {
+                    bullets.push(new Bullet(this.x + this.w, this.y + this.h/2, 1));
+                    this.shootCooldown = 15;
+                }
+            }
+            
+            hits(other) {
+                return this.x < other.x + other.w &&
+                       this.x + this.w > other.x &&
+                       this.y < other.y + other.h &&
+                       this.y + this.h > other.y;
+            }
+            
+            intersects(platform) {
+                return this.x < platform.x + platform.w &&
+                       this.x + this.w > platform.x &&
+                       this.y + this.h > platform.y &&
+                       this.y + this.h < platform.y + platform.h + this.vy;
+            }
+            
+            show() {
+                if (this.invincible % 10 < 5 || this.invincible === 0) {
+                    fill(0, 255, 255);
+                    stroke(0, 200, 200);
+                    strokeWeight(2);
+                    rect(this.x, this.y, this.w, this.h);
+                    
+                    // Gun
+                    fill(150);
+                    rect(this.x + this.w, this.y + this.h/2 - 3, 10, 6);
+                    
+                    // Visor
+                    fill(255, 0, 0);
+                    rect(this.x + 5, this.y + 8, 20, 6);
+                }
+            }
+        }
+        
+        class Enemy {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.w = 30;
+                this.h = 35;
+                this.vx = -settings.enemySpeed;
+                this.health = settings.enemyHealth;
+                this.shootTimer = int(random(60, 180));
+            }
+            
+            update() {
+                this.x += this.vx;
+                
+                this.shootTimer--;
+                if (this.shootTimer <= 0 && abs(this.x - player.x) < 400) {
+                    bullets.push(new Bullet(this.x, this.y + this.h/2, -1));
+                    this.shootTimer = int(random(60, 180));
+                }
+            }
+            
+            show() {
+                fill(255, 0, 0);
+                stroke(200, 0, 0);
+                strokeWeight(2);
+                rect(this.x, this.y, this.w, this.h);
+                
+                // Gun
+                fill(100);
+                rect(this.x - 10, this.y + this.h/2 - 3, 10, 6);
+                
+                // Health bar
+                fill(0);
+                rect(this.x, this.y - 10, this.w, 4);
+                fill(0, 255, 0);
+                rect(this.x, this.y - 10, this.w * (this.health / settings.enemyHealth), 4);
+            }
+        }
+        
+        class Boss {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.w = 80;
+                this.h = 100;
+                this.vx = -0.5;
+                this.health = 20;
+                this.maxHealth = 20;
+                this.shootTimer = 30;
+                this.direction = -1;
+            }
+            
+            update() {
+                this.x += this.vx;
+                
+                // Bounce
+                if (this.x < levelWidth - 600 || this.x > levelWidth - 200) {
+                    this.vx *= -1;
+                }
+                
+                this.shootTimer--;
+                if (this.shootTimer <= 0) {
+                    // Triple shot
+                    bullets.push(new Bullet(this.x, this.y + 30, -1));
+                    bullets.push(new Bullet(this.x, this.y + 50, -1));
+                    bullets.push(new Bullet(this.x, this.y + 70, -1));
+                    this.shootTimer = 40;
+                }
+            }
+            
+            show() {
+                fill(150, 0, 150);
+                stroke(100, 0, 100);
+                strokeWeight(3);
+                rect(this.x, this.y, this.w, this.h);
+                
+                // Boss features
+                fill(255, 0, 0);
+                circle(this.x + 20, this.y + 30, 15);
+                circle(this.x + 60, this.y + 30, 15);
+                
+                // Health bar
+                fill(0);
+                rect(this.x, this.y - 15, this.w, 8);
+                fill(255, 0, 0);
+                rect(this.x, this.y - 15, this.w * (this.health / this.maxHealth), 8);
+                
+                // Label
+                fill(255);
+                textSize(12);
+                textAlign(CENTER);
+                text('BOSS', this.x + this.w/2, this.y - 20);
+            }
+        }
+        
+        class Bullet {
+            constructor(x, y, direction) {
+                this.x = x;
+                this.y = y;
+                this.w = 10;
+                this.h = 4;
+                this.speed = 8 * direction;
+                this.direction = direction;
+            }
+            
+            update() {
+                this.x += this.speed;
+            }
+            
+            hits(target) {
+                return this.x < target.x + target.w &&
+                       this.x + this.w > target.x &&
+                       this.y < target.y + target.h &&
+                       this.y + this.h > target.y;
+            }
+            
+            show() {
+                fill(this.direction > 0 ? color(255, 255, 0) : color(255, 100, 0));
+                noStroke();
+                rect(this.x, this.y, this.w, this.h);
+            }
+        }
+        
+        class Platform {
+            constructor(x, y, w, h) {
+                this.x = x;
+                this.y = y;
+                this.w = w;
+                this.h = h;
+            }
+            
+            show() {
+                fill(100, 150, 100);
+                stroke(80, 120, 80);
+                strokeWeight(2);
+                rect(this.x, this.y, this.w, this.h);
+            }
+        }
+        
+        class Powerup {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.w = 20;
+                this.h = 20;
+                this.vy = 2;
+            }
+            
+            update() {
+                this.y += this.vy;
+                
+                // Stop at ground
+                if (this.y > height - 70) {
+                    this.y = height - 70;
+                    this.vy = 0;
+                }
+            }
+            
+            collect(player) {
+                return this.x < player.x + player.w &&
+                       this.x + this.w > player.x &&
+                       this.y < player.y + player.h &&
+                       this.y + this.h > player.y;
+            }
+            
+            show() {
+                fill(255, 215, 0);
+                stroke(200, 170, 0);
+                strokeWeight(2);
+                circle(this.x + this.w/2, this.y + this.h/2, this.w);
+                
+                fill(255);
+                textSize(12);
+                textAlign(CENTER, CENTER);
+                text('★', this.x + this.w/2, this.y + this.h/2);
+            }
+        }
+        
+        class Particle {
+            constructor(x, y, col) {
+                this.x = x;
+                this.y = y;
+                this.vx = random(-3, 3);
+                this.vy = random(-3, 3);
+                this.life = 30;
+                this.col = col;
+            }
+            
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life--;
+            }
+            
+            isDead() {
+                return this.life <= 0;
+            }
+            
+            show() {
+                fill(red(this.col), green(this.col), blue(this.col), this.life * 8);
+                noStroke();
+                circle(this.x, this.y, 6);
+            }
+        }
+    </script>
+</body>
+</html>`;
+    
+    const encodedHtml = encodeURIComponent(gamePage);
+    return "data:text/html;charset=utf-8," + encodedHtml;
+    
+  } catch (error) {
+    console.error('Game Error:', error);
+    return undefined;
+  }
+}
