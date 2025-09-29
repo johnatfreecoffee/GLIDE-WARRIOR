@@ -1,8 +1,8 @@
 [
   {
     "kind": "column",
-    "name": "Glide Warrior Game",
-    "description": "Full side-scrolling run & gun platformer game - Contra/Metal Slug style action!",
+    "name": "Glide Warrior ULTRA",
+    "description": "Full-featured run & gun game with weapons, character selection, custom levels, co-op mode, and more!",
     "author": "Your Name",
     "params": [
       {
@@ -11,14 +11,34 @@
         "type": "string"
       },
       {
+        "name": "characterType",
+        "displayName": "Character Type",
+        "type": "string"
+      },
+      {
         "name": "difficulty",
-        "displayName": "Difficulty (easy/normal/hard)",
+        "displayName": "Difficulty",
         "type": "string"
       },
       {
         "name": "startLevel",
-        "displayName": "Start Level (1-3)",
+        "displayName": "Start Level",
         "type": "number"
+      },
+      {
+        "name": "levelData",
+        "displayName": "Custom Level JSON",
+        "type": "string"
+      },
+      {
+        "name": "coopMode",
+        "displayName": "Co-op Mode (true/false)",
+        "type": "string"
+      },
+      {
+        "name": "player2Name",
+        "displayName": "Player 2 Name",
+        "type": "string"
       }
     ],
     "result": {
