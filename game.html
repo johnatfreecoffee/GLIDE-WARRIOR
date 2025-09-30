@@ -3,327 +3,1309 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Simple Warrior</title>
+    <title>Glide Warrior ULTRA</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
     <style>
         body { 
             margin: 0;
+            padding: 0;
+            overflow: hidden;
             background: #000;
             display: flex;
-            flex-direction: column;
-            align-items: center;
             justify-content: center;
-            min-height: 100vh;
+            align-items: center;
             font-family: 'Courier New', monospace;
-            color: #0f0;
         }
         canvas {
             display: block;
-            border: 2px solid #0f0;
-        }
-        #info {
-            margin: 10px;
-            font-size: 14px;
-            text-align: center;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            border: 2px solid #0a0;
         }
     </style>
 </head>
 <body>
-    <div id="info">Loading platformer game...</div>
     <script>
-        // Get parameters from URL
+        // ============ CONFIGURATION ============
         const urlParams = new URLSearchParams(window.location.search);
-        const PLAYER_NAME = urlParams.get('player') || 'PLAYER';
-        const DIFFICULTY = urlParams.get('diff') || 'easy';
+        const PLAYER_NAME = urlParams.get('player') || 'WARRIOR';
+        const PLAYER2_NAME = urlParams.get('player2') || 'SIDEKICK';
+        const CHARACTER_TYPE = urlParams.get('char') || 'soldier';
+        const DIFFICULTY = urlParams.get('diff') || 'normal';
+        const START_LEVEL = parseInt(urlParams.get('level')) || 1;
+        const COOP_MODE = urlParams.get('coop') === 'true';
+        const CUSTOM_LEVEL_DATA = urlParams.get('custom') ? decodeURIComponent(urlParams.get('custom')) : null;
         
-        // Difficulty settings
-        const settings = {
-            easy: { enemySpeed: 1, enemyCount: 2, coinSpeed: 2 },
-            normal: { enemySpeed: 2, enemyCount: 3, coinSpeed: 3 },
-            hard: { enemySpeed: 3, enemyCount: 4, coinSpeed: 4 }
+        // Character stats
+        const characterStats = {
+            soldier: { speed: 4, jumpPower: 12, health: 3, color: [0, 255, 255], special: 'balanced' },
+            speedster: { speed: 6, jumpPower: 15, health: 2, color: [255, 255, 0], special: 'doubleJump' },
+            tank: { speed: 3, jumpPower: 10, health: 5, color: [255, 100, 0], special: 'armor' },
+            ninja: { speed: 5, jumpPower: 13, health: 2, color: [138, 43, 226], special: 'dash' }
         };
         
-        const diff = settings[DIFFICULTY] || settings.easy;
+        // Difficulty settings
+        const difficultySettings = {
+            easy: { enemySpeed: 1, enemyHealth: 2, enemyCount: 3, spawnRate: 300 },
+            normal: { enemySpeed: 1.5, enemyHealth: 3, enemyCount: 5, spawnRate: 240 },
+            hard: { enemySpeed: 2, enemyHealth: 4, enemyCount: 7, spawnRate: 180 }
+        };
         
-        // Game variables
-        let player;
-        let platforms = [];
-        let coins = [];
+        const settings = difficultySettings[DIFFICULTY] || difficultySettings.normal;
+        const charStats = characterStats[CHARACTER_TYPE] || characterStats.soldier;
+        
+        // Weapon types
+        const WEAPONS = {
+            PISTOL: { name: 'PISTOL', damage: 1, cooldown: 15, spread: 1, color: [255, 255, 0] },
+            SPREAD: { name: 'SPREAD', damage: 1, cooldown: 20, spread: 3, color: [255, 100, 255] },
+            LASER: { name: 'LASER', damage: 2, cooldown: 8, spread: 1, color: [0, 255, 255] },
+            MISSILE: { name: 'MISSILE', damage: 3, cooldown: 30, spread: 1, color: [255, 100, 0] }
+        };
+        
+        // ============ GAME STATE ============
+        let players = [];
         let enemies = [];
+        let bullets = [];
+        let platforms = [];
+        let powerups = [];
+        let particles = [];
+        let destructibles = [];
+        let explosions = [];
         let score = 0;
-        let lives = 3;
+        let currentLevel = START_LEVEL;
         let gameState = 'playing';
+        let cameraX = 0;
+        let levelWidth = 4000;
+        let spawnTimer = 0;
+        let bossActive = false;
+        let boss = null;
         let gameTime = 0;
+        let highScore = parseInt(localStorage.getItem('glideWarriorScore') || '0');
         
         function setup() {
-            createCanvas(800, 600);
+            createCanvas(900, 700);
+            initLevel(currentLevel);
+        }
+        
+        function initLevel(level) {
+            enemies = [];
+            bullets = [];
+            powerups = [];
+            particles = [];
+            destructibles = [];
+            explosions = [];
+            bossActive = false;
+            boss = null;
+            gameTime = 0;
             
-            // Create player
-            player = {
-                x: 100,
-                y: 400,
-                w: 30,
-                h: 30,
-                vx: 0,
-                vy: 0,
-                speed: 5,
-                jumpPower: -12,
-                gravity: 0.6,
-                onGround: false,
-                invincible: 0
-            };
+            // Create players
+            players = [];
+            players.push(new Player(100, 300, PLAYER_NAME, CHARACTER_TYPE, 1));
+            if (COOP_MODE) {
+                players.push(new Player(150, 300, PLAYER2_NAME, 'tank', 2));
+            }
             
-            // Create platforms
-            platforms = [
-                { x: 0, y: 550, w: 800, h: 50 }, // Ground
-                { x: 200, y: 450, w: 150, h: 20 },
-                { x: 450, y: 350, w: 150, h: 20 },
-                { x: 300, y: 250, w: 200, h: 20 },
-                { x: 600, y: 450, w: 150, h: 20 }
-            ];
+            // Load custom level or generate default
+            if (CUSTOM_LEVEL_DATA) {
+                try {
+                    loadCustomLevel(JSON.parse(CUSTOM_LEVEL_DATA));
+                    return;
+                } catch (e) {
+                    console.error('Custom level error:', e);
+                }
+            }
             
-            // Update info
-            document.getElementById('info').innerHTML = 
-                `Player: ${PLAYER_NAME} | Difficulty: ${DIFFICULTY} | Arrow Keys + SPACE to jump`;
+            generateLevel(level);
+        }
+        
+        function loadCustomLevel(data) {
+            platforms = [];
+            destructibles = [];
+            
+            platforms.push(new Platform(0, height - 50, data.width || levelWidth, 50, false));
+            levelWidth = data.width || levelWidth;
+            
+            if (data.platforms) {
+                for (let p of data.platforms) {
+                    platforms.push(new Platform(p.x, p.y, p.w, p.h, p.destructible || false));
+                }
+            }
+            
+            if (data.destructibles) {
+                for (let d of data.destructibles) {
+                    destructibles.push(new Destructible(d.x, d.y, d.w || 40, d.h || 40));
+                }
+            }
+        }
+        
+        function generateLevel(level) {
+            platforms = [];
+            destructibles = [];
+            
+            // Ground
+            platforms.push(new Platform(0, height - 50, levelWidth, 50, false));
+            
+            if (level === 1) {
+                // Level 1: Basic platforms
+                platforms.push(new Platform(300, 550, 200, 20, false));
+                platforms.push(new Platform(600, 450, 200, 20, false));
+                platforms.push(new Platform(900, 550, 200, 20, false));
+                platforms.push(new Platform(1200, 400, 200, 20, false));
+                platforms.push(new Platform(1500, 500, 200, 20, false));
+                platforms.push(new Platform(1800, 350, 200, 20, false));
+                platforms.push(new Platform(2100, 450, 200, 20, false));
+                platforms.push(new Platform(2400, 300, 200, 20, false));
+                platforms.push(new Platform(2700, 400, 200, 20, false));
+                platforms.push(new Platform(3000, 500, 200, 20, false));
+                platforms.push(new Platform(3300, 350, 300, 20, false));
+                
+                // Destructible crates
+                for (let i = 0; i < 15; i++) {
+                    let x = 400 + i * 200 + random(-50, 50);
+                    let y = height - 150 + random(-100, 0);
+                    destructibles.push(new Destructible(x, y, 40, 40));
+                }
+                
+            } else if (level === 2) {
+                // Level 2: More challenging
+                platforms.push(new Platform(200, 550, 150, 20, false));
+                platforms.push(new Platform(450, 450, 150, 20, false));
+                platforms.push(new Platform(700, 550, 150, 20, false));
+                platforms.push(new Platform(950, 350, 150, 20, false));
+                platforms.push(new Platform(1200, 500, 150, 20, false));
+                platforms.push(new Platform(1450, 300, 150, 20, false));
+                platforms.push(new Platform(1700, 450, 150, 20, false));
+                platforms.push(new Platform(1950, 250, 150, 20, false));
+                platforms.push(new Platform(2200, 400, 150, 20, false));
+                platforms.push(new Platform(2450, 350, 150, 20, false));
+                platforms.push(new Platform(2700, 500, 150, 20, false));
+                platforms.push(new Platform(2950, 300, 200, 20, false));
+                platforms.push(new Platform(3200, 450, 300, 20, false));
+                
+                // More destructibles
+                for (let i = 0; i < 20; i++) {
+                    let x = 300 + i * 150 + random(-30, 30);
+                    let y = height - 150 + random(-150, 0);
+                    destructibles.push(new Destructible(x, y, 40, 40));
+                }
+                
+            } else if (level === 3) {
+                // Level 3: Expert level
+                platforms.push(new Platform(250, 500, 120, 20, false));
+                platforms.push(new Platform(500, 400, 120, 20, false));
+                platforms.push(new Platform(750, 550, 120, 20, false));
+                platforms.push(new Platform(1000, 300, 120, 20, false));
+                platforms.push(new Platform(1250, 500, 120, 20, false));
+                platforms.push(new Platform(1500, 250, 120, 20, false));
+                platforms.push(new Platform(1750, 400, 120, 20, false));
+                platforms.push(new Platform(2000, 550, 120, 20, false));
+                platforms.push(new Platform(2250, 200, 120, 20, false));
+                platforms.push(new Platform(2500, 450, 120, 20, false));
+                platforms.push(new Platform(2750, 300, 120, 20, false));
+                platforms.push(new Platform(3000, 500, 120, 20, false));
+                platforms.push(new Platform(3250, 350, 400, 20, false));
+                
+                // Lots of destructibles
+                for (let i = 0; i < 25; i++) {
+                    let x = 350 + i * 120 + random(-20, 20);
+                    let y = height - 150 + random(-200, 0);
+                    destructibles.push(new Destructible(x, y, 40, 40));
+                }
+            }
         }
         
         function draw() {
-            background(20, 20, 40);
+            background(15, 15, 30);
             
             if (gameState === 'playing') {
                 updateGame();
             } else {
                 showGameOver();
             }
+            
+            drawHUD();
         }
         
         function updateGame() {
             gameTime++;
             
-            // Player movement
-            if (keyIsDown(LEFT_ARROW)) {
-                player.vx = -player.speed;
-            } else if (keyIsDown(RIGHT_ARROW)) {
-                player.vx = player.speed;
-            } else {
-                player.vx = 0;
+            // Camera follow main player
+            let mainPlayer = players[0];
+            if (mainPlayer && mainPlayer.health > 0) {
+                cameraX = lerp(cameraX, mainPlayer.x - width / 3, 0.08);
+                cameraX = constrain(cameraX, 0, levelWidth - width);
             }
             
-            // Apply gravity
-            player.vy += player.gravity;
+            push();
+            translate(-cameraX, 0);
             
-            // Update position
-            player.x += player.vx;
-            player.y += player.vy;
+            drawBackground();
             
-            // Platform collision
-            player.onGround = false;
+            // Draw platforms
             for (let platform of platforms) {
-                if (player.x < platform.x + platform.w &&
-                    player.x + player.w > platform.x &&
-                    player.y + player.h > platform.y &&
-                    player.y + player.h < platform.y + platform.h + player.vy) {
-                    
-                    if (player.vy > 0) { // Falling down
-                        player.y = platform.y - player.h;
-                        player.vy = 0;
-                        player.onGround = true;
-                    }
+                platform.show();
+            }
+            
+            // Draw destructibles
+            for (let i = destructibles.length - 1; i >= 0; i--) {
+                destructibles[i].show();
+                if (destructibles[i].destroyed) {
+                    destructibles.splice(i, 1);
                 }
             }
             
-            // Keep player in horizontal bounds
-            player.x = constrain(player.x, 0, width - player.w);
-            
-            // Fall off screen = lose life
-            if (player.y > height) {
-                lives--;
-                player.x = 100;
-                player.y = 400;
-                player.vy = 0;
-            }
-            
-            // Draw platforms
-            fill(100, 150, 100);
-            stroke(80, 120, 80);
-            strokeWeight(2);
-            for (let platform of platforms) {
-                rect(platform.x, platform.y, platform.w, platform.h);
-            }
-            
-            // Draw player
-            if (player.invincible % 10 < 5 || player.invincible === 0) {
-                fill(0, 255, 255);
-                stroke(0, 200, 200);
-                strokeWeight(2);
-                rect(player.x, player.y, player.w, player.h);
-            }
-            
-            if (player.invincible > 0) player.invincible--;
-            
-            // Spawn coins on platforms
-            if (gameTime % 180 === 0) {
-                let platform = random(platforms.slice(1)); // Skip ground
-                coins.push({
-                    x: random(platform.x, platform.x + platform.w - 20),
-                    y: platform.y - 25,
-                    w: 20,
-                    h: 20,
-                    collected: false
-                });
-            }
-            
-            // Update coins
-            for (let i = coins.length - 1; i >= 0; i--) {
-                let coin = coins[i];
-                
-                if (!coin.collected) {
-                    // Draw coin
-                    fill(255, 215, 0);
-                    stroke(200, 170, 0);
-                    strokeWeight(2);
-                    circle(coin.x + coin.w/2, coin.y + coin.h/2, coin.w);
-                    
-                    // Check collision
-                    if (player.x < coin.x + coin.w &&
-                        player.x + player.w > coin.x &&
-                        player.y < coin.y + coin.h &&
-                        player.y + player.h > coin.y) {
-                        coin.collected = true;
-                        score += 10;
-                    }
-                } else {
-                    coins.splice(i, 1);
+            // Update players
+            for (let player of players) {
+                if (player.health > 0) {
+                    player.update();
+                    player.show();
                 }
             }
             
             // Spawn enemies
-            if (gameTime % 240 === 0 && enemies.length < diff.enemyCount) {
-                enemies.push({
-                    x: width,
-                    y: 520,
-                    w: 25,
-                    h: 25,
-                    vx: -diff.enemySpeed,
-                    type: 'walker'
-                });
+            spawnTimer++;
+            if (spawnTimer > settings.spawnRate && enemies.length < settings.enemyCount && !bossActive) {
+                let spawnX = cameraX + width + random(100, 300);
+                if (spawnX < levelWidth - 200) {
+                    let enemyTypes = ['ground', 'flying', 'jumping', 'tank'];
+                    let type = random(enemyTypes);
+                    
+                    if (type === 'flying') {
+                        enemies.push(new FlyingEnemy(spawnX, random(200, 400)));
+                    } else if (type === 'jumping') {
+                        enemies.push(new JumpingEnemy(spawnX, height - 150));
+                    } else if (type === 'tank') {
+                        enemies.push(new TankEnemy(spawnX, height - 200));
+                    } else {
+                        enemies.push(new GroundEnemy(spawnX, height - 150));
+                    }
+                    spawnTimer = 0;
+                }
+            }
+            
+            // Boss spawn
+            if (mainPlayer && mainPlayer.x > levelWidth - 800 && !bossActive && currentLevel >= 2) {
+                bossActive = true;
+                boss = new Boss(levelWidth - 400, height - 250);
             }
             
             // Update enemies
             for (let i = enemies.length - 1; i >= 0; i--) {
-                let enemy = enemies[i];
-                enemy.x += enemy.vx;
+                enemies[i].update();
+                enemies[i].show();
                 
-                // Draw enemy
-                fill(255, 0, 0);
-                stroke(200, 0, 0);
-                strokeWeight(2);
-                rect(enemy.x, enemy.y, enemy.w, enemy.h);
-                
-                // Check collision with player
-                if (player.invincible === 0 &&
-                    player.x < enemy.x + enemy.w &&
-                    player.x + player.w > enemy.x &&
-                    player.y < enemy.y + enemy.h &&
-                    player.y + player.h > enemy.y) {
-                    
-                    lives--;
-                    player.invincible = 120; // 2 seconds invincibility
-                    
-                    // Knockback
-                    if (player.x < enemy.x) {
-                        player.x -= 30;
-                    } else {
-                        player.x += 30;
+                if (enemies[i].health <= 0) {
+                    score += 100;
+                    explosions.push(new Explosion(enemies[i].x, enemies[i].y, 'enemy'));
+                    if (random() < 0.4) {
+                        let powerupType = random(['weapon', 'health', 'coin']);
+                        powerups.push(new Powerup(enemies[i].x, enemies[i].y, powerupType));
                     }
-                }
-                
-                // Remove if off screen
-                if (enemy.x < -enemy.w) {
+                    enemies.splice(i, 1);
+                } else if (enemies[i].x < cameraX - 100) {
                     enemies.splice(i, 1);
                 }
             }
             
-            // Draw HUD
-            fill(0, 200);
+            // Update boss
+            if (boss) {
+                boss.update();
+                boss.show();
+                if (boss.health <= 0) {
+                    score += 1000;
+                    explosions.push(new Explosion(boss.x, boss.y, 'boss'));
+                    boss = null;
+                    bossActive = false;
+                }
+            }
+            
+            // Update bullets
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                bullets[i].update();
+                bullets[i].show();
+                
+                // Hit enemies
+                for (let j = enemies.length - 1; j >= 0; j--) {
+                    if (bullets[i] && bullets[i].friendly && bullets[i].hits(enemies[j])) {
+                        enemies[j].health -= bullets[i].damage;
+                        particles.push(new Particle(bullets[i].x, bullets[i].y, color(255, 255, 0)));
+                        if (bullets[i].type !== 'laser') {
+                            bullets.splice(i, 1);
+                        }
+                        break;
+                    }
+                }
+                
+                // Hit boss
+                if (boss && bullets[i] && bullets[i].friendly && bullets[i].hits(boss)) {
+                    boss.health -= bullets[i].damage;
+                    particles.push(new Particle(bullets[i].x, bullets[i].y, color(255, 255, 0)));
+                    if (bullets[i].type !== 'laser') {
+                        bullets.splice(i, 1);
+                    }
+                }
+                
+                // Hit players (enemy bullets)
+                for (let player of players) {
+                    if (bullets[i] && !bullets[i].friendly && bullets[i].hits(player) && player.invincible === 0) {
+                        player.takeDamage(1);
+                        if (bullets[i].type !== 'laser') {
+                            bullets.splice(i, 1);
+                        }
+                        break;
+                    }
+                }
+                
+                // Hit destructibles
+                for (let d of destructibles) {
+                    if (bullets[i] && !d.destroyed && bullets[i].hits(d)) {
+                        d.health--;
+                        particles.push(new Particle(bullets[i].x, bullets[i].y, color(139, 69, 19)));
+                        if (d.health <= 0) {
+                            d.destroyed = true;
+                            explosions.push(new Explosion(d.x, d.y, 'crate'));
+                            score += 25;
+                        }
+                        if (bullets[i].type !== 'laser') {
+                            bullets.splice(i, 1);
+                        }
+                        break;
+                    }
+                }
+                
+                // Remove off-screen
+                if (bullets[i] && (bullets[i].x < cameraX - 100 || bullets[i].x > cameraX + width + 100)) {
+                    bullets.splice(i, 1);
+                }
+            }
+            
+            // Update powerups
+            for (let i = powerups.length - 1; i >= 0; i--) {
+                powerups[i].update();
+                powerups[i].show();
+                
+                for (let player of players) {
+                    if (powerups[i].collect(player)) {
+                        if (powerups[i].type === 'weapon') {
+                            player.upgradeWeapon();
+                        } else if (powerups[i].type === 'health') {
+                            player.health = min(player.maxHealth, player.health + 1);
+                        } else if (powerups[i].type === 'coin') {
+                            score += 50;
+                        }
+                        powerups.splice(i, 1);
+                        break;
+                    }
+                }
+            }
+            
+            // Update particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                particles[i].update();
+                particles[i].show();
+                if (particles[i].isDead()) {
+                    particles.splice(i, 1);
+                }
+            }
+            
+            // Update explosions
+            for (let i = explosions.length - 1; i >= 0; i--) {
+                explosions[i].update();
+                explosions[i].show();
+                if (explosions[i].isDead()) {
+                    explosions.splice(i, 1);
+                }
+            }
+            
+            pop();
+            
+            // Check win condition
+            let anyPlayerAtEnd = false;
+            for (let player of players) {
+                if (player.health > 0 && player.x > levelWidth - 100) {
+                    anyPlayerAtEnd = true;
+                }
+            }
+            
+            if (anyPlayerAtEnd) {
+                if (currentLevel < 3) {
+                    gameState = 'levelComplete';
+                } else {
+                    gameState = 'victory';
+                    if (score > highScore) {
+                        highScore = score;
+                        localStorage.setItem('glideWarriorScore', highScore.toString());
+                    }
+                }
+            }
+            
+            // Check lose condition
+            let allPlayersDead = true;
+            for (let player of players) {
+                if (player.health > 0) {
+                    allPlayersDead = false;
+                }
+            }
+            
+            if (allPlayersDead) {
+                gameState = 'gameover';
+                if (score > highScore) {
+                    highScore = score;
+                    localStorage.setItem('glideWarriorScore', highScore.toString());
+                }
+            }
+        }
+        
+        function drawBackground() {
+            // Parallax background layers
+            fill(30, 30, 60);
             noStroke();
-            rect(0, 0, width, 60);
+            for (let i = 0; i < 8; i++) {
+                let x = (cameraX * 0.2 + i * 300) % 600;
+                rect(x - 300, 0, 300, height);
+            }
+            
+            // Stars
+            fill(255, 255, 150);
+            for (let i = 0; i < 100; i++) {
+                let x = (i * 127 + cameraX * 0.3) % levelWidth;
+                let y = (i * 97) % (height - 100);
+                circle(x, y, 2);
+            }
+            
+            // Distant mountains
+            fill(60, 60, 100);
+            for (let i = 0; i < 20; i++) {
+                let x = (i * 200 + cameraX * 0.5) % (levelWidth + 400);
+                let h = 100 + sin(i) * 50;
+                triangle(x - 100, height - 50, x, height - 50 - h, x + 100, height - 50);
+            }
+        }
+        
+        function drawHUD() {
+            // HUD background
+            fill(0, 0, 0, 180);
+            noStroke();
+            rect(0, 0, width, 80);
             
             fill(255);
-            textSize(16);
+            textSize(14);
             textAlign(LEFT);
-            text(`Player: ${PLAYER_NAME}`, 10, 25);
-            text(`Score: ${score}`, 10, 45);
-            text(`Lives: ${lives}`, 250, 25);
-            text(`Difficulty: ${DIFFICULTY.toUpperCase()}`, 250, 45);
+            
+            // Player 1 info
+            fill(charStats.color);
+            text(\`P1: \${players[0].name}\`, 10, 20);
+            fill(255);
+            
+            // Health bar for P1
+            let p1 = players[0];
+            fill(255, 0, 0);
+            rect(10, 25, 100, 10);
+            fill(0, 255, 0);
+            rect(10, 25, 100 * (p1.health / p1.maxHealth), 10);
+            
+            text(\`Weapon: \${p1.weapon.name}\`, 120, 20);
+            text(\`Score: \${score}\`, 250, 20);
+            text(\`Level: \${currentLevel}\`, 350, 20);
+            text(\`High: \${highScore}\`, 450, 20);
+            
+            if (COOP_MODE && players.length > 1) {
+                fill(characterStats.tank.color);
+                text(\`P2: \${players[1].name}\`, 10, 55);
+                fill(255);
+                
+                // Health bar for P2
+                let p2 = players[1];
+                fill(255, 0, 0);
+                rect(10, 60, 100, 10);
+                fill(0, 255, 0);
+                rect(10, 60, 100 * (p2.health / p2.maxHealth), 10);
+                
+                text(\`Weapon: \${p2.weapon.name}\`, 120, 55);
+            }
             
             // Controls
             textAlign(RIGHT);
-            text('←→ Move | SPACE Jump', width - 10, 25);
-            text('Avoid red enemies!', width - 10, 45);
-            
-            // Check game over
-            if (lives <= 0) {
-                gameState = 'gameover';
+            textSize(12);
+            text('P1: ←→ Move | ↑ Jump | X Shoot | C Dash', width - 10, 20);
+            if (COOP_MODE) {
+                text('P2: WASD Move | I Jump | M Shoot | N Dash', width - 10, 35);
             }
-            
-            // Win condition (survive 2 minutes)
-            if (gameTime > 60 * 60 * 2) {
-                gameState = 'victory';
-            }
+            text(\`Character: \${CHARACTER_TYPE.toUpperCase()} | Difficulty: \${DIFFICULTY.toUpperCase()}\`, width - 10, 55);
         }
         
         function showGameOver() {
-            background(0);
+            background(0, 0, 0, 200);
             
             if (gameState === 'victory') {
                 fill(0, 255, 0);
-                textSize(48);
+                textSize(64);
                 textAlign(CENTER, CENTER);
-                text('VICTORY!', width/2, height/2 - 80);
+                text('VICTORY!', width/2, height/2 - 100);
                 
                 fill(255);
                 textSize(24);
-                text(`${PLAYER_NAME} survived!`, width/2, height/2 - 30);
+                text(\`\${PLAYER_NAME} completed Level \${currentLevel}!\`, width/2, height/2 - 40);
+                text(\`Final Score: \${score}\`, width/2, height/2 - 10);
+                text(\`High Score: \${highScore}\`, width/2, height/2 + 20);
+                
+            } else if (gameState === 'levelComplete') {
+                fill(100, 255, 100);
+                textSize(48);
+                textAlign(CENTER, CENTER);
+                text(\`LEVEL \${currentLevel} COMPLETE!\`, width/2, height/2 - 80);
+                
+                fill(255);
+                textSize(24);
+                text(\`Score: \${score}\`, width/2, height/2 - 20);
+                text('Press SPACE for next level', width/2, height/2 + 20);
+                
             } else {
                 fill(255, 0, 0);
-                textSize(48);
+                textSize(64);
                 textAlign(CENTER, CENTER);
-                text('GAME OVER', width/2, height/2 - 80);
+                text('GAME OVER', width/2, height/2 - 100);
                 
                 fill(255);
                 textSize(24);
-                text(`${PLAYER_NAME} was defeated!`, width/2, height/2 - 30);
+                text(\`\${PLAYER_NAME} was defeated!\`, width/2, height/2 - 40);
+                text(\`Final Score: \${score}\`, width/2, height/2 - 10);
+                text(\`High Score: \${highScore}\`, width/2, height/2 + 20);
             }
             
-            text(`Final Score: ${score}`, width/2, height/2 + 10);
-            text(`Difficulty: ${DIFFICULTY}`, width/2, height/2 + 40);
             textSize(16);
-            text('Press R to restart', width/2, height/2 + 80);
+            text('Press R to restart', width/2, height/2 + 60);
         }
         
         function keyPressed() {
-            if (key === ' ' && gameState === 'playing') {
-                if (player.onGround) {
-                    player.vy = player.jumpPower;
+            if (key === ' ') {
+                if (gameState === 'playing') {
+                    players[0].jump();
+                } else if (gameState === 'levelComplete') {
+                    currentLevel++;
+                    gameState = 'playing';
+                    initLevel(currentLevel);
+                }
+            }
+            
+            if (key === 'x' || key === 'X') {
+                if (gameState === 'playing') {
+                    players[0].shoot();
+                }
+            }
+            
+            if (key === 'c' || key === 'C') {
+                if (gameState === 'playing') {
+                    players[0].dash();
+                }
+            }
+            
+            // Player 2 controls
+            if (COOP_MODE && players.length > 1 && gameState === 'playing') {
+                if (key === 'i' || key === 'I') {
+                    players[1].jump();
+                }
+                if (key === 'm' || key === 'M') {
+                    players[1].shoot();
+                }
+                if (key === 'n' || key === 'N') {
+                    players[1].dash();
                 }
             }
             
             if (key === 'r' || key === 'R') {
-                // Restart game
                 score = 0;
-                lives = 3;
-                coins = [];
-                enemies = [];
+                currentLevel = START_LEVEL;
                 gameState = 'playing';
-                gameTime = 0;
-                player.x = 100;
-                player.y = 400;
-                player.vx = 0;
-                player.vy = 0;
-                player.invincible = 0;
+                initLevel(currentLevel);
             }
         }
+        
+        // ============ PLAYER CLASS ============
+        class Player {
+            constructor(x, y, name, charType, playerNum) {
+                this.x = x;
+                this.y = y;
+                this.w = 30;
+                this.h = 40;
+                this.vx = 0;
+                this.vy = 0;
+                this.name = name;
+                this.playerNum = playerNum;
+                
+                let stats = characterStats[charType] || characterStats.soldier;
+                this.speed = stats.speed;
+                this.jumpPower = -stats.jumpPower;
+                this.color = color(stats.color);
+                this.maxHealth = stats.health;
+                this.health = stats.health;
+                this.special = stats.special;
+                
+                this.gravity = 0.6;
+                this.onGround = false;
+                this.weapon = WEAPONS.PISTOL;
+                this.shootCooldown = 0;
+                this.invincible = 0;
+                this.jumpsLeft = 1;
+                this.dashCooldown = 0;
+                this.dashing = false;
+                this.dashTimer = 0;
+            }
+            
+            update() {
+                if (this.health <= 0) return;
+                
+                // Movement controls
+                if (this.playerNum === 1) {
+                    if (keyIsDown(LEFT_ARROW)) {
+                        this.vx = this.dashing ? -this.speed * 2 : -this.speed;
+                    } else if (keyIsDown(RIGHT_ARROW)) {
+                        this.vx = this.dashing ? this.speed * 2 : this.speed;
+                    } else {
+                        this.vx = 0;
+                    }
+                    
+                    if (keyIsDown(88)) { // X
+                        this.shoot();
+                    }
+                } else if (this.playerNum === 2) {
+                    if (keyIsDown(65)) { // A
+                        this.vx = -this.speed;
+                    } else if (keyIsDown(68)) { // D
+                        this.vx = this.speed;
+                    } else {
+                        this.vx = 0;
+                    }
+                    
+                    if (keyIsDown(77)) { // M
+                        this.shoot();
+                    }
+                }
+                
+                this.x += this.vx;
+                this.vy += this.gravity;
+                this.y += this.vy;
+                
+                this.onGround = false;
+                
+                // Platform collision
+                for (let platform of platforms) {
+                    if (this.intersects(platform)) {
+                        if (this.vy > 0) {
+                            this.y = platform.y - this.h;
+                            this.vy = 0;
+                            this.onGround = true;
+                            if (this.special === 'doubleJump') {
+                                this.jumpsLeft = 2;
+                            } else {
+                                this.jumpsLeft = 1;
+                            }
+                        }
+                    }
+                }
+                
+                // Destructible collision
+                for (let d of destructibles) {
+                    if (!d.destroyed && this.intersects(d)) {
+                        if (this.vy > 0) {
+                            this.y = d.y - this.h;
+                            this.vy = 0;
+                            this.onGround = true;
+                            if (this.special === 'doubleJump') {
+                                this.jumpsLeft = 2;
+                            } else {
+                                this.jumpsLeft = 1;
+                            }
+                        }
+                    }
+                }
+                
+                this.x = constrain(this.x, 0, levelWidth - this.w);
+                
+                // Enemy collision
+                if (this.invincible === 0) {
+                    for (let enemy of enemies) {
+                        if (this.hits(enemy)) {
+                            this.takeDamage(1);
+                        }
+                    }
+                    
+                    if (boss && this.hits(boss)) {
+                        this.takeDamage(2);
+                    }
+                }
+                
+                if (this.invincible > 0) this.invincible--;
+                if (this.shootCooldown > 0) this.shootCooldown--;
+                if (this.dashCooldown > 0) this.dashCooldown--;
+                if (this.dashTimer > 0) {
+                    this.dashTimer--;
+                    if (this.dashTimer === 0) this.dashing = false;
+                }
+                
+                // Fall death
+                if (this.y > height + 100) {
+                    this.takeDamage(this.health);
+                }
+            }
+            
+            jump() {
+                if (this.jumpsLeft > 0) {
+                    this.vy = this.jumpPower;
+                    this.jumpsLeft--;
+                }
+            }
+            
+            shoot() {
+                if (this.shootCooldown === 0) {
+                    if (this.weapon.spread === 1) {
+                        bullets.push(new Bullet(this.x + this.w, this.y + this.h/2, 1, this.weapon, true));
+                    } else if (this.weapon.spread === 3) {
+                        bullets.push(new Bullet(this.x + this.w, this.y + this.h/2 - 10, 1, this.weapon, true));
+                        bullets.push(new Bullet(this.x + this.w, this.y + this.h/2, 1, this.weapon, true));
+                        bullets.push(new Bullet(this.x + this.w, this.y + this.h/2 + 10, 1, this.weapon, true));
+                    }
+                    this.shootCooldown = this.weapon.cooldown;
+                }
+            }
+            
+            dash() {
+                if (this.special === 'dash' && this.dashCooldown === 0) {
+                    this.dashing = true;
+                    this.dashTimer = 15;
+                    this.dashCooldown = 90;
+                    this.invincible = 15;
+                }
+            }
+            
+            takeDamage(amount) {
+                if (this.special === 'armor') {
+                    amount = Math.max(1, amount - 1);
+                }
+                this.health -= amount;
+                this.invincible = 120;
+                explosions.push(new Explosion(this.x, this.y, 'player'));
+            }
+            
+            upgradeWeapon() {
+                let weapons = [WEAPONS.PISTOL, WEAPONS.SPREAD, WEAPONS.LASER, WEAPONS.MISSILE];
+                let currentIndex = weapons.findIndex(w => w.name === this.weapon.name);
+                this.weapon = weapons[(currentIndex + 1) % weapons.length];
+            }
+            
+            hits(other) {
+                return this.x < other.x + other.w &&
+                       this.x + this.w > other.x &&
+                       this.y < other.y + other.h &&
+                       this.y + this.h > other.y;
+            }
+            
+            intersects(obj) {
+                return this.x < obj.x + obj.w &&
+                       this.x + this.w > obj.x &&
+                       this.y + this.h > obj.y &&
+                       this.y + this.h < obj.y + obj.h + this.vy;
+            }
+            
+            show() {
+                if (this.health <= 0) return;
+                
+                if (this.invincible % 10 < 5 || this.invincible === 0) {
+                    fill(this.color);
+                    stroke(red(this.color) * 0.8, green(this.color) * 0.8, blue(this.color) * 0.8);
+                    strokeWeight(2);
+                    rect(this.x, this.y, this.w, this.h);
+                    
+                    // Gun
+                    fill(150);
+                    rect(this.x + this.w, this.y + this.h/2 - 3, 12, 6);
+                    
+                    // Name
+                    fill(255);
+                    textSize(10);
+                    textAlign(CENTER);
+                    text(this.name, this.x + this.w/2, this.y - 5);
+                }
+                
+                if (this.dashing) {
+                    fill(255, 255, 0, 100);
+                    noStroke();
+                    circle(this.x + this.w/2, this.y + this.h/2, this.w * 2.5);
+                }
+            }
+        }
+        
+        // ============ ENEMY CLASSES ============
+        class GroundEnemy {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.w = 30;
+                this.h = 35;
+                this.vx = -settings.enemySpeed;
+                this.health = settings.enemyHealth;
+                this.maxHealth = settings.enemyHealth;
+                this.shootTimer = int(random(60, 180));
+            }
+            
+            update() {
+                this.x += this.vx;
+                this.shootTimer--;
+                if (this.shootTimer <= 0 && abs(this.x - players[0].x) < 400) {
+                    bullets.push(new Bullet(this.x, this.y + this.h/2, -1, WEAPONS.PISTOL, false));
+                    this.shootTimer = int(random(60, 180));
+                }
+            }
+            
+            show() {
+                fill(255, 0, 0);
+                stroke(200, 0, 0);
+                strokeWeight(2);
+                rect(this.x, this.y, this.w, this.h);
+                fill(100);
+                rect(this.x - 10, this.y + this.h/2 - 3, 10, 6);
+                // Health bar
+                fill(0);
+                rect(this.x, this.y - 8, this.w, 4);
+                fill(0, 255, 0);
+                rect(this.x, this.y - 8, this.w * (this.health / this.maxHealth), 4);
+            }
+        }
+        
+        class FlyingEnemy extends GroundEnemy {
+            constructor(x, y) {
+                super(x, y);
+                this.vx = -settings.enemySpeed * 0.8;
+                this.amplitude = 80;
+                this.frequency = 0.03;
+                this.baseY = y;
+            }
+            
+            update() {
+                this.x += this.vx;
+                this.y = this.baseY + sin(frameCount * this.frequency) * this.amplitude;
+                this.y = constrain(this.y, 100, height - 150);
+                
+                this.shootTimer--;
+                if (this.shootTimer <= 0 && abs(this.x - players[0].x) < 400) {
+                    bullets.push(new Bullet(this.x, this.y + this.h/2, -1, WEAPONS.PISTOL, false));
+                    this.shootTimer = int(random(40, 120));
+                }
+            }
+            
+            show() {
+                fill(255, 100, 255);
+                stroke(200, 50, 200);
+                strokeWeight(2);
+                ellipse(this.x + this.w/2, this.y + this.h/2, this.w, this.h);
+                fill(100);
+                rect(this.x - 10, this.y + this.h/2 - 3, 10, 6);
+                // Health bar
+                fill(0);
+                rect(this.x, this.y - 8, this.w, 4);
+                fill(0, 255, 0);
+                rect(this.x, this.y - 8, this.w * (this.health / this.maxHealth), 4);
+            }
+        }
+        
+        class JumpingEnemy extends GroundEnemy {
+            constructor(x, y) {
+                super(x, y);
+                this.vy = 0;
+                this.gravity = 0.6;
+                this.jumpTimer = int(random(60, 120));
+                this.onGround = false;
+            }
+            
+            update() {
+                this.x += this.vx;
+                this.vy += this.gravity;
+                this.y += this.vy;
+                
+                this.onGround = false;
+                for (let platform of platforms) {
+                    if (this.intersects(platform)) {
+                        this.y = platform.y - this.h;
+                        this.vy = 0;
+                        this.onGround = true;
+                    }
+                }
+                
+                this.jumpTimer--;
+                if (this.jumpTimer <= 0 && this.onGround) {
+                    this.vy = -12;
+                    this.jumpTimer = int(random(60, 120));
+                }
+                
+                this.shootTimer--;
+                if (this.shootTimer <= 0 && abs(this.x - players[0].x) < 400) {
+                    bullets.push(new Bullet(this.x, this.y + this.h/2, -1, WEAPONS.PISTOL, false));
+                    this.shootTimer = int(random(60, 180));
+                }
+            }
+            
+            intersects(platform) {
+                return this.x < platform.x + platform.w &&
+                       this.x + this.w > platform.x &&
+                       this.y + this.h > platform.y &&
+                       this.y + this.h < platform.y + platform.h + this.vy;
+            }
+            
+            show() {
+                fill(255, 255, 0);
+                stroke(200, 200, 0);
+                strokeWeight(2);
+                rect(this.x, this.y, this.w, this.h);
+                fill(100);
+                rect(this.x - 10, this.y + this.h/2 - 3, 10, 6);
+                // Health bar
+                fill(0);
+                rect(this.x, this.y - 8, this.w, 4);
+                fill(0, 255, 0);
+                rect(this.x, this.y - 8, this.w * (this.health / this.maxHealth), 4);
+            }
+        }
+        
+        class TankEnemy extends GroundEnemy {
+            constructor(x, y) {
+                super(x, y);
+                this.w = 50;
+                this.h = 60;
+                this.vx = -settings.enemySpeed * 0.4;
+                this.health = settings.enemyHealth * 3;
+                this.maxHealth = settings.enemyHealth * 3;
+            }
+            
+            show() {
+                fill(100, 100, 100);
+                stroke(50, 50, 50);
+                strokeWeight(3);
+                rect(this.x, this.y, this.w, this.h);
+                fill(150);
+                rect(this.x - 15, this.y + this.h/2 - 5, 15, 10);
+                // Health bar
+                fill(0);
+                rect(this.x, this.y - 10, this.w, 6);
+                fill(0, 255, 0);
+                rect(this.x, this.y - 10, this.w * (this.health / this.maxHealth), 6);
+            }
+        }
+        
+        class Boss {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.w = 100;
+                this.h = 120;
+                this.vx = -0.8;
+                this.health = 40;
+                this.maxHealth = 40;
+                this.shootTimer = 30;
+                this.pattern = 0;
+                this.patternTimer = 0;
+            }
+            
+            update() {
+                this.x += this.vx;
+                if (this.x < levelWidth - 700 || this.x > levelWidth - 300) {
+                    this.vx *= -1;
+                }
+                
+                this.patternTimer++;
+                this.shootTimer--;
+                
+                if (this.shootTimer <= 0) {
+                    if (this.pattern === 0) {
+                        // Triple shot
+                        bullets.push(new Bullet(this.x, this.y + 40, -1, WEAPONS.PISTOL, false));
+                        bullets.push(new Bullet(this.x, this.y + 60, -1, WEAPONS.PISTOL, false));
+                        bullets.push(new Bullet(this.x, this.y + 80, -1, WEAPONS.PISTOL, false));
+                    } else if (this.pattern === 1) {
+                        // Spread shots
+                        bullets.push(new Bullet(this.x, this.y + 60, -1, WEAPONS.SPREAD, false));
+                    }
+                    
+                    this.shootTimer = 35;
+                }
+                
+                if (this.patternTimer > 300) {
+                    this.pattern = (this.pattern + 1) % 2;
+                    this.patternTimer = 0;
+                }
+            }
+            
+            show() {
+                fill(150, 0, 150);
+                stroke(100, 0, 100);
+                strokeWeight(4);
+                rect(this.x, this.y, this.w, this.h);
+                
+                // Boss features
+                fill(255, 0, 0);
+                circle(this.x + 25, this.y + 40, 20);
+                circle(this.x + 75, this.y + 40, 20);
+                
+                // Health bar
+                fill(0);
+                rect(this.x, this.y - 20, this.w, 10);
+                fill(255, 0, 0);
+                rect(this.x, this.y - 20, this.w * (this.health / this.maxHealth), 10);
+                
+                // Label
+                fill(255);
+                textSize(16);
+                textAlign(CENTER);
+                text('BOSS', this.x + this.w/2, this.y - 25);
+            }
+        }
+        
+        // ============ OTHER CLASSES ============
+        class Bullet {
+            constructor(x, y, direction, weapon, friendly) {
+                this.x = x;
+                this.y = y;
+                this.w = weapon.name === 'LASER' ? 25 : weapon.name === 'MISSILE' ? 12 : 8;
+                this.h = weapon.name === 'LASER' ? 4 : weapon.name === 'MISSILE' ? 8 : 4;
+                this.speed = weapon.name === 'MISSILE' ? 6 * direction : 10 * direction;
+                this.direction = direction;
+                this.damage = weapon.damage;
+                this.type = weapon.name.toLowerCase();
+                this.friendly = friendly;
+                this.color = weapon.color;
+            }
+            
+            update() {
+                this.x += this.speed;
+            }
+            
+            hits(target) {
+                return this.x < target.x + target.w &&
+                       this.x + this.w > target.x &&
+                       this.y < target.y + target.h &&
+                       this.y + this.h > target.y;
+            }
+            
+            show() {
+                if (this.type === 'laser') {
+                    stroke(this.color);
+                    strokeWeight(4);
+                    line(this.x, this.y, this.x + this.w, this.y);
+                } else if (this.type === 'missile') {
+                    fill(this.color);
+                    stroke(255, 255, 255);
+                    strokeWeight(1);
+                    ellipse(this.x + this.w/2, this.y + this.h/2, this.w, this.h);
+                    // Trail
+                    fill(255, 100, 0, 150);
+                    ellipse(this.x - 5, this.y + this.h/2, 8, 4);
+                } else {
+                    fill(this.color);
+                    stroke(255);
+                    strokeWeight(1);
+                    rect(this.x, this.y, this.w, this.h);
+                }
+            }
+        }
+        
+        class Platform {
+            constructor(x, y, w, h, destructible) {
+                this.x = x;
+                this.y = y;
+                this.w = w;
+                this.h = h;
+                this.destructible = destructible;
+            }
+            
+            show() {
+                fill(100, 150, 100);
+                stroke(80, 120, 80);
+                strokeWeight(2);
+                rect(this.x, this.y, this.w, this.h);
+                
+                // Platform details
+                fill(120, 170, 120);
+                rect(this.x + 2, this.y + 2, this.w - 4, 6);
+            }
+        }
+        
+        class Destructible {
+            constructor(x, y, w, h) {
+                this.x = x;
+                this.y = y;
+                this.w = w;
+                this.h = h;
+                this.health = 3;
+                this.destroyed = false;
+            }
+            
+            show() {
+                if (!this.destroyed) {
+                    fill(139, 69, 19);
+                    stroke(101, 50, 13);
+                    strokeWeight(2);
+                    rect(this.x, this.y, this.w, this.h);
+                    
+                    // Crate details
+                    fill(160, 82, 45);
+                    rect(this.x + 4, this.y + 4, this.w - 8, this.h - 8);
+                    
+                    // Damage cracks
+                    if (this.health < 3) {
+                        stroke(80, 40, 10);
+                        strokeWeight(2);
+                        line(this.x + 5, this.y + 5, this.x + this.w - 5, this.y + this.h - 5);
+                    }
+                    if (this.health < 2) {
+                        line(this.x + this.w - 5, this.y + 5, this.x + 5, this.y + this.h - 5);
+                    }
+                }
+            }
+        }
+        
+        class Powerup {
+            constructor(x, y, type) {
+                this.x = x;
+                this.y = y;
+                this.w = 24;
+                this.h = 24;
+                this.vy = 3;
+                this.type = type;
+                this.bounce = 0;
+            }
+            
+            update() {
+                this.y += this.vy;
+                this.bounce += 0.1;
+                
+                // Stop at ground
+                if (this.y > height - 80) {
+                    this.y = height - 80;
+                    this.vy = 0;
+                }
+            }
+            
+            collect(player) {
+                return this.x < player.x + player.w &&
+                       this.x + this.w > player.x &&
+                       this.y < player.y + player.h &&
+                       this.y + this.h > player.y;
+            }
+            
+            show() {
+                let bob = sin(this.bounce) * 3;
+                
+                if (this.type === 'weapon') {
+                    fill(255, 0, 255);
+                    stroke(200, 0, 200);
+                    strokeWeight(2);
+                    circle(this.x + this.w/2, this.y + this.h/2 + bob, this.w);
+                    fill(255);
+                    textSize(14);
+                    textAlign(CENTER, CENTER);
+                    text('W', this.x + this.w/2, this.y + this.h/2 + bob);
+                } else if (this.type === 'health') {
+                    fill(0, 255, 0);
+                    stroke(0, 200, 0);
+                    strokeWeight(2);
+                    circle(this.x + this.w/2, this.y + this.h/2 + bob, this.w);
+                    fill(255);
+                    textSize(14);
+                    textAlign(CENTER, CENTER);
+                    text('+', this.x + this.w/2, this.y + this.h/2 + bob);
+                } else {
+                    fill(255, 215, 0);
+                    stroke(200, 170, 0);
+                    strokeWeight(2);
+                    circle(this.x + this.w/2, this.y + this.h/2 + bob, this.w);
+                    fill(255);
+                    textSize(14);
+                    textAlign(CENTER, CENTER);
+                    text('★', this.x + this.w/2, this.y + this.h/2 + bob);
+                }
+            }
+        }
+        
+        class Particle {
+            constructor(x, y, col) {
+                this.x = x;
+                this.y = y;
+                this.vx = random(-4, 4);
+                this.vy = random(-4, 4);
+                this.life = 40;
+                this.maxLife = 40;
+                this.col = col;
+                this.size = random(3, 8);
+            }
+            
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.vy += 0.1; // gravity
+                this.life--;
+            }
+            
+            isDead() {
+                return this.life <= 0;
+            }
+            
+            show() {
+                let alpha = map(this.life, 0, this.maxLife, 0, 255);
+                fill(red(this.col), green(this.col), blue(this.col), alpha);
+                noStroke();
+                circle(this.x, this.y, this.size);
+            }
+        }
+        
+        class Explosion {
+            constructor(x, y, type) {
+                this.x = x;
+                this.y = y;
+                this.size = type === 'boss' ? 100 : type === 'player' ? 60 : 40;
+                this.maxSize = this.size;
+                this.life = 30;
+                this.maxLife = 30;
+                this.particles = [];
+                
+                // Create explosion particles
+                let count = type === 'boss' ? 25 : type === 'player' ? 15 : 10;
+                for (let i = 0; i < count; i++) {
+                    let col = type === 'boss' ? color(255, 0, 255) : 
+                             type === 'player' ? color(0, 255, 255) : 
+                             color(255, 100, 0);
+                    this.particles.push(new Particle(this.x, this.y, col));
+                }
+            }
+            
+            update() {
+                this.life--;
+                this.size = map(this.life, 0, this.maxLife, this.maxSize, 0);
+                
+                for (let i = this.particles.length - 1; i >= 0; i--) {
+                    this.particles[i].update();
+                    if (this.particles[i].isDead()) {
+                        this.particles.splice(i, 1);
+                    }
+                }
+            }
+            
+            isDead() {
+                return this.life <= 0 && this.particles.length === 0;
+            }
+            
+            show() {
+                if (this.life > 0) {
+                    let alpha = map(this.life, 0, this.maxLife, 0, 150);
+                    fill(255, 255, 255, alpha);
+                    noStroke();
+                    circle(this.x, this.y, this.size);
+                }
+                
+                for (let particle of this.particles) {
+                    particle.show();
+                }
+            }
+        }
+        
     </script>
 </body>
 </html>
